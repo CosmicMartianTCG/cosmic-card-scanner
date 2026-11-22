@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.9';
+const VERSION='3.0';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -52,7 +52,7 @@ return score;}
 
 
 async function searchCards(phrase,fromOCR=false){if(searchBusy)return;const parsed=parseQuery(phrase);if(!parsed.name&&!parsed.number){status('Type a card name or collector number.','error');return;}searchBusy=true;$('results').innerHTML='';$('candidate').classList.add('hidden');selected=null;status('Searching the free Pokémon card catalog…');try{
-let found=[];if(parsed.number){
+let found=[];window.__cosmicCandidates=[];if(parsed.number){
  const ids=[parsed.number];const normalized=normalizeId(parsed.number);if(normalized.toUpperCase()!==parsed.number.toUpperCase())ids.push(normalized);
  for(const id of ids){const list=await api(API+'?localId='+encodeURIComponent(id));if(!Array.isArray(list))throw new Error('Unexpected card catalog response');for(const card of list){if(normalizeId(card.localId)===normalized&&!found.some(x=>x.id===card.id))found.push(card);}if(found.length)break;}
 }
@@ -70,13 +70,50 @@ if(!found.length&&parsed.name){
  }
 }
 let catalog=null;if(parsed.total&&found.length>1)catalog=await getSetCatalog();
-found.sort((a,b)=>scoreCard(b,parsed,catalog)-scoreCard(a,parsed,catalog));const count=found.length;found=found.slice(0,65);
+found.sort((a,b)=>scoreCard(b,parsed,catalog)-scoreCard(a,parsed,catalog));const count=found.length;found=found.slice(0,65);window.__cosmicCandidates=found;
 if(!count){status(`No matching card found for “${phrase}”. Edit the detected text or search by card name below.`,'error');return;}
 $('results').innerHTML=found.map(c=>{const set=setForCard(c,catalog);const setDesc=set?.name||c.id.substring(0,c.id.lastIndexOf('-'));const total=set?.cardCount?.official;return `<button class="result-item" data-card="${safe(c.id)}">${imageUrl(c)?`<img loading="lazy" src="${safe(imageUrl(c))}" alt="">`:''}<span><strong>${safe(c.name)}</strong><small>${safe(setDesc)} · ${safe(c.localId)}${total?'/'+safe(total):''} · tap to confirm</small></span></button>`;}).join('');
 status(`${count} candidate${count===1?'':'s'} found. Match the artwork and set number before saving.${fromOCR?' If the scan guessed wrong, edit the search.':''}`,'ok');if(count===1)await chooseCard(found[0].id);
 }catch(e){status(`Card lookup failed: ${e.message}. Check internet, or try manual search.`, 'error');}finally{searchBusy=false;}}
 
-async function chooseCard(id){status('Loading card details and available market prices…');try{const card=await api(`${API}/${encodeURIComponent(id)}`);setCandidate(card);status('Confirm the card and foil type before saving it to your batch.','ok');}catch(e){status('Could not load this card: '+e.message,'error');}}
+
+let capturedPreview=null;
+async function chooseCard(id){
+ // Stage 3: verify artwork BEFORE downloading a detailed card record and its pricing.
+ status('Loading reference artwork for comparison…');
+ try{
+  const all=await api(API+'?id='+encodeURIComponent(id));
+  const summary=Array.isArray(all)?all.find(c=>c.id===id):null;
+  // The list endpoint may not support filtering IDs. Use summary from last results if available.
+  const card=summary||window.__cosmicCandidates?.find(c=>c.id===id);
+  if(!card)throw new Error('Card summary unavailable; try the search again.');
+  selected=null;
+  const c=$('candidate');
+  c.classList.remove('hidden');
+  const image=imageUrl(card);
+  const name=safe(card.name),idText=safe(card.localId);
+  const refImg=image?'<img src="'+safe(image)+'" alt="Catalog reference artwork" style="max-width:44%;height:auto;object-fit:contain;border-radius:8px">':'<p>Reference artwork unavailable</p>';
+  const photo=capturedPreview?'<img src="'+capturedPreview+'" alt="Photo of scanned card" style="max-width:44%;height:auto;object-fit:contain;border-radius:8px">':'<p>Compare with your physical card</p>';
+  const setName=card.set?.name||card.id?.split('-').slice(0,-1).join('-')||'Unknown set';
+  c.innerHTML='<h3>Verify artwork and card printing</h3><p><strong>'+name+'</strong> · '+safe(setName)+' · #'+idText+'</p>'+
+    '<div style="display:flex;justify-content:space-evenly;align-items:center;gap:12px;margin:14px 0">'+photo+refImg+'</div>'+
+    '<p class="fineprint">Left: your scan, if available. Right: catalog artwork. Check the name, set, collector number and artwork. Different foil versions can share artwork.</p>'+
+    '<button id="verifyArtwork" class="btn primary" '+(!image?'disabled':'')+'>Artwork matches — show price</button>'+
+    '<button id="rejectArtwork" class="btn secondary" style="margin-top:10px">Not this printing — choose another</button>';
+  $('verifyArtwork').addEventListener('click',()=>loadVerifiedCard(id));
+  $('rejectArtwork').addEventListener('click',()=>{c.classList.add('hidden');status('Choose a different card from the results, or refine the set/collector number.','error');});
+  status('Check photo versus reference before pricing. The app has NOT verified visual similarity automatically.','');
+  c.scrollIntoView({behavior:'smooth',block:'nearest'});
+ }catch(e){status('Could not show artwork: '+e.message,'error');}
+}
+async function loadVerifiedCard(id){
+ status('Artwork confirmed. Retrieving the card printing and price…');
+ try{
+  const card=await api(API+'/'+encodeURIComponent(id));
+  setCandidate(card);
+  status('Artwork confirmation recorded. Choose the foil printing and condition; price is an estimate.','ok');
+ }catch(e){status('Card or price retrieval failed: '+e.message,'error');}
+}
 async function startCamera(){if(stream){stopCamera();return;}if(!navigator.mediaDevices?.getUserMedia){status('This browser cannot start live camera. Use Take or select photo below. A secure HTTPS site is needed.','error');return;}try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1920}}});$('camera').srcObject=stream;await $('camera').play();$('cameraStage').classList.add('live');$('scanNow').disabled=false;$('startCamera').textContent='Stop camera';$('cameraState').textContent='Live';status('Align one card and tap Scan card.');}catch(e){status('Camera permission failed. Use Take or select photo below, or allow camera access in Safari settings.','error');}}
 function stopCamera(){for(const track of stream?.getTracks()||[])track.stop();stream=null;$('camera').srcObject=null;$('cameraStage').classList.remove('live');$('scanNow').disabled=true;$('startCamera').textContent='Start camera';$('cameraState').textContent='Not started';}
 function liveFrame(){const video=$('camera');const w=video.videoWidth,h=video.videoHeight;if(!w||!h)throw new Error('Camera is not ready');
@@ -193,7 +230,7 @@ async function performOCR(image,method){
  $('scanNow').disabled=true;
  status('Scan #'+String(record.sequence).padStart(3,'0')+' saved. Checking card title and collector number…');
  try{
-  const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
+  capturedPreview=image;const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
   const w=await worker();
   // Treat text at the top, number near the bottom, and main picture as separate areas.
   // Plain-color narrow strip preserves decorative card lettering better than thresholding the whole top third.
@@ -245,7 +282,7 @@ async function performOCR(image,method){
    fuzzy=closestPokemon(nameResults.map(r=>r.value).join(' '),lexicon);
   }catch(e){console.warn('Pokédex unavailable; falling back to OCR text',e);}
   const fuzzyNames=fuzzy.filter(x=>x.score>=.78).map(x=>x.name);
-  const searches=[number,...fuzzyNames,...plausible,bestName,...uniqueNames].filter(Boolean);
+  const searches=[...(number&&fuzzyNames.length?[fuzzyNames[0]+' '+number]:[]),...fuzzyNames,number,...plausible,bestName,...uniqueNames].filter(Boolean);
   if(fuzzy.length){$('ocrText').textContent+='\n\nPRINTED CARD NAME SUGGESTIONS:\n'+fuzzy.map(x=>x.name+' ('+Math.round(x.score*100)+'% text similarity)').join('\n');}
   let success=false;
   for(const q of [...new Set(searches)].slice(0,9)){
