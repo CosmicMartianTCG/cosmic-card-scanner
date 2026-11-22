@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.8';
+const VERSION='2.9';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -119,6 +119,62 @@ function credibleName(text,confidence=0){
  if(!name||confidence<45||name.length>35)return '';
  return name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/, '').trim();
 }
+
+const POKEDEX_STORE='cosmic-pokedex-species-v1';
+let pokedexPromise=null;
+const normalizePokemon=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+function pokemonDisplay(s){return String(s||'').split('-').map(v=>v.charAt(0).toUpperCase()+v.slice(1)).join(' ').replace(/^Mr Mime$/,'Mr. Mime').replace(/^Mime Jr$/,'Mime Jr.').replace(/^Type Null$/,'Type: Null');}
+async function getPokemonLexicon(){
+ if(pokedexPromise)return pokedexPromise;
+ pokedexPromise=(async()=>{
+  let saved=null;try{saved=JSON.parse(localStorage.getItem(POKEDEX_STORE)||'null');}catch{}
+  if(Array.isArray(saved)&&saved.length>=1025)return saved;
+  const response=await fetch('https://pokeapi.co/api/v2/pokemon-species?limit=1025',{headers:{Accept:'application/json'}});
+  if(!response.ok)throw new Error('Pokédex download failed ('+response.status+')');
+  const json=await response.json();
+  const names=(json.results||[]).map(x=>pokemonDisplay(x.name)).filter(Boolean);
+  if(names.length<1025)throw new Error('Pokédex list was incomplete');
+  // Add TCG naming variants and commonly printed forms, not just the 1025 base species.
+  const extras=['Galarian Moltres','Galarian Articuno','Galarian Zapdos','Galarian Slowpoke','Galarian Slowbro','Galarian Slowking','Alolan Meowth','Galarian Meowth','Alolan Vulpix','Alolan Ninetales','Alolan Exeggutor','Alolan Raichu','Hisuian Zoroark','Hisuian Growlithe','Hisuian Arcanine','Hisuian Samurott','Hisuian Typhlosion','Hisuian Decidueye','Paldean Wooper','Paldean Tauros'];
+  const all=[...new Set([...names,...extras])];
+  try{localStorage.setItem(POKEDEX_STORE,JSON.stringify(all));}catch{}
+  return all;
+ })().catch(e=>{pokedexPromise=null;throw e;});
+ return pokedexPromise;
+}
+function editDistance(a,b){
+ if(!a||!b)return Math.max(a.length,b.length);
+ let prev=Array.from({length:b.length+1},(_,i)=>i);
+ for(let i=1;i<=a.length;i++){
+  const next=[i];
+  for(let j=1;j<=b.length;j++)next[j]=Math.min(next[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+  prev=next;
+ }
+ return prev[b.length];
+}
+function closestPokemon(raw,lexicon){
+ const cleaned=String(raw||'').replace(/\b(?:BASIC|HP|STAGE)\b/gi,' ').replace(/\s+/g,' ').trim();
+ if(!cleaned)return [];
+ const tokens=cleaned.split(/[\s|_/]+/).filter(Boolean);
+ const segments=[cleaned,...tokens,...tokens.flatMap((_,i)=>tokens.slice(i,i+2).length===2?[tokens.slice(i,i+2).join(' ')]:[])];
+ const scores=new Map();
+ for(const species of lexicon){
+  const candidate=normalizePokemon(species);
+  let top=0;
+  for(const segment of segments){
+   const val=normalizePokemon(segment);
+   if(val.length<4)continue;
+   let similarity=1-editDistance(val,candidate)/Math.max(val.length,candidate.length);
+   if(val===candidate)similarity=1;
+   if(val.length>=5&&candidate.includes(val))similarity=Math.max(similarity,.74*val.length/candidate.length+.18);
+   if(candidate.length>=5&&val.includes(candidate))similarity=Math.max(similarity,.88);
+   top=Math.max(top,similarity);
+  }
+  if(top>=.72)scores.set(species,top);
+ }
+ return [...scores].sort((a,b)=>b[1]-a[1]).slice(0,5).map(([name,score])=>({name,score}));
+}
+
 async function performOCR(image,method){
  if(ocrBusy)return;
  ocrBusy=true;
@@ -174,7 +230,15 @@ async function performOCR(image,method){
   const bestName=plausible.find(n=>n.includes(' '))||plausible[0]||'';
   $('ocrTextBox').classList.remove('hidden');
   $('ocrText').textContent=attempts.map(a=>a.label.toUpperCase()+' ('+Math.round(a.confidence)+'%):\n'+a.value).join('\n\n-----\n\n');
-  const searches=[number,...plausible,bestName,...uniqueNames].filter(Boolean);
+  let fuzzy=[];
+  try{
+   status('Matching text against the full 1,025-species Pokédex…');
+   const lexicon=await getPokemonLexicon();
+   fuzzy=closestPokemon(nameResults.map(r=>r.value).join(' '),lexicon);
+  }catch(e){console.warn('Pokédex unavailable; falling back to OCR text',e);}
+  const fuzzyNames=fuzzy.filter(x=>x.score>=.78).map(x=>x.name);
+  const searches=[number,...fuzzyNames,...plausible,bestName,...uniqueNames].filter(Boolean);
+  if(fuzzy.length){$('ocrText').textContent+='\n\nPOKÉDEX NAME SUGGESTIONS:\n'+fuzzy.map(x=>x.name+' ('+Math.round(x.score*100)+'% text similarity)').join('\n');}
   let success=false;
   for(const q of [...new Set(searches)].slice(0,9)){
     $('searchText').value=q;
@@ -183,7 +247,7 @@ async function performOCR(image,method){
   }
   if(!success){
    $('searchText').value=number||bestName||'';
-   status('The card photo was captured, but automatic identification is uncertain. Try entering the Pokémon name or printed card number below. Your timestamped scan is saved.','error');
+   status('No confident Pokédex match from this photo. Your timestamped scan is saved; type the name or collector number below.','error');
   }else{
    status('Possible cards found. Confirm the picture, collector number, and foil type before saving.','ok');
   }
