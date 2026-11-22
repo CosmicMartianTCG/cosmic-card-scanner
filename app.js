@@ -152,8 +152,8 @@ try{
  const extraGuesses=[...new Set(guesses)].filter(w=>w!==query);
  // Match distinctive combinations of printed name and attacks when collector-number OCR fails.
  // Verified against official Pokémon HeartGold & SoulSilver card list: Meowth 75/123.
- const visibleText=(nameText+'\\n'+numberText).toLowerCase();
- const signatureCard=/\\bmeowth\\b/.test(visibleText)&&/dig\\s*claws/.test(visibleText)?'hgss1-75':null;
+ const visibleText=(nameText+'\n'+numberText).toLowerCase();
+ const signatureCard=/\bmeowth\b/i.test(visibleText)&&/dig\s*claws/i.test(visibleText)?'hgss1-75':null;
 
  if(signatureCard){
    $('searchText').value='Meowth 75/123';
