@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.1';
+const VERSION='2.2';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -79,7 +79,15 @@ const c=document.createElement('canvas');const factor=Math.min(1,1750/Math.max(e
 return c.toDataURL('image/jpeg',.9);}
 
 function imageFromFile(file){return new Promise((resolve,reject)=>{const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{try{const c=document.createElement('canvas'),scale=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));c.width=Math.round(img.naturalWidth*scale);c.height=Math.round(img.naturalHeight*scale);c.getContext('2d').drawImage(img,0,0,c.width,c.height);resolve(c.toDataURL('image/jpeg',.84));}catch(e){reject(e);}finally{URL.revokeObjectURL(url);}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Could not open photo'));};img.src=url;});}
+
 function crop(imgData,edge){return new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const c=document.createElement('canvas');const y=edge==='bottom'?Math.floor(img.height*.65):0;const height=edge==='bottom'?img.height-y:Math.floor(img.height*.33);c.width=img.width;c.height=height;c.getContext('2d').drawImage(img,0,y,img.width,height,0,0,c.width,c.height);resolve(c.toDataURL('image/png'));};img.onerror=reject;img.src=imgData;});}
+function cropRegion(imgData,rx,ry,rw,rh,enhance=false){return new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{
+ const sx=Math.round(img.width*rx),sy=Math.round(img.height*ry),sw=Math.round(img.width*rw),sh=Math.round(img.height*rh);
+ const c=document.createElement('canvas');const multiplier=enhance?Math.max(2,Math.min(4,1100/sw)):1;c.width=Math.max(1,Math.round(sw*multiplier));c.height=Math.max(1,Math.round(sh*multiplier));
+ const ctx=c.getContext('2d',{willReadFrequently:true});ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(img,sx,sy,sw,sh,0,0,c.width,c.height);
+ if(enhance){const pixels=ctx.getImageData(0,0,c.width,c.height);const a=pixels.data;for(let i=0;i<a.length;i+=4){const lum=.299*a[i]+.587*a[i+1]+.114*a[i+2];const n=lum>185?255:lum<65?0:Math.round((lum-65)*255/120);a[i]=a[i+1]=a[i+2]=n;}ctx.putImageData(pixels,0,0);}
+ resolve(c.toDataURL('image/png'));
+ };img.onerror=reject;img.src=imgData;});}
 async function worker(){if(ocrWorker)return ocrWorker;if(!window.Tesseract)throw new Error('Free OCR library could not load. Check your internet connection.');ocrWorker=await Tesseract.createWorker('eng');return ocrWorker;}
 function detectNumber(text){const clean=String(text||'').replace(/(?<=\d)[Oo](?=\d|\s*[/|])/g,'0').replace(/(?<=\d)[Ii](?=\d|\s*[/|])/g,'1');
 const matches=[...clean.matchAll(/\b([A-Z]{0,3}\s*\d{1,4})\s*[\/|]\s*(\d{1,4})\b/gi)].filter(m=>Number(m[2])>=10&&Number(m[2])<=2000);
@@ -87,21 +95,42 @@ return matches.at(-1)?.[0].replace(/\s+/g,'')||'';}
 function detectName(text){const lines=String(text||'').split(/[\r\n]+/).map(x=>x.trim()).filter(Boolean);const skip=/^(BASIC|STAGE\s*\d*|TRAINER|ENERGY|POK[EÉ]MON|HP\s*\d+|EVOLVES|RULE|ILLUS|NO\.|\d+\s*(HP|\/))/i;
 for(const raw of lines){let x=raw.replace(/\bHP\s*\d+.*$/i,'').replace(/[^A-Za-z0-9 '\-]/g,'').trim();if(x.length>=3&&x.length<=45&&/[A-Za-z]{3}/.test(x)&&!skip.test(x)&&!/^\d/.test(x))return x;}
 return '';}
-
-async function performOCR(image,method){if(ocrBusy)return;ocrBusy=true;const record=newScan(method);selected=null;$('candidate').classList.add('hidden');$('results').innerHTML='';$('scanNow').disabled=true;status(`Scan #${String(record.sequence).padStart(3,'0')} timestamped in ${record.batchId}. Reading the card inside the frame…`);
-try{const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
-const w=await worker();const bottom=await crop(image,'bottom'),top=await crop(image,'top');
-// One worker is used sequentially for better compatibility with iPhone Safari.
-const bottomResult=await w.recognize(bottom),topResult=await w.recognize(top);
-let bottomText=bottomResult.data?.text||'',topText=topResult.data?.text||'';
-let number=detectNumber(bottomText)||detectNumber(topText),name=detectName(topText);
-// If the guide missed the edge text, a whole-card pass often recovers it.
-if(!number&&!name){const fullResult=await w.recognize(image);const fullText=fullResult.data?.text||'';number=detectNumber(fullText);name=detectName(fullText);topText+='\n[whole card]\n'+fullText;}
-const full=topText+'\n--- bottom ---\n'+bottomText;$('ocrTextBox').classList.remove('hidden');$('ocrText').textContent=full;
-const query=number?`${name} ${number}`.trim():name;
-if(query){$('searchText').value=query;status(`Read “${query}”. Searching matching Pokémon cards…`);await searchCards(query,true);}else{status('Could not read the card. Try holding it closer inside the green frame, with less glare. You can also type its name or number below.','error');}
-}catch(e){status(`Scan #${record.sequence} saved, but text recognition failed: ${e.message}. Check your connection, or use manual search.`, 'error');}finally{ocrBusy=false;$('scanNow').disabled=!stream;}}
-
+function credibleName(text,confidence=0){const s=detectName(text);if(!s||confidence<45||s.length>35)return '';if(/[|\\\/=]{2,}/.test(text))return '';const letters=(s.match(/[a-z]/gi)||[]).length;if(letters<Math.max(3,s.length*.55))return '';return s;}
+async function performOCR(image,method){if(ocrBusy)return;ocrBusy=true;const record=newScan(method);selected=null;$('candidate').classList.add('hidden');$('results').innerHTML='';$('scanNow').disabled=true;status('Scan #'+String(record.sequence).padStart(3,'0')+' saved with timestamp. Reading card name and collector number…');
+try{
+ const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
+ const w=await worker();
+ // Attempt to read the name from the top edge and collector number from the lower edge.
+ const top=await cropRegion(image,.035,.012,.93,.27,true);
+ const bottom=await cropRegion(image,.015,.68,.97,.315,true);
+ const nameResult=await w.recognize(top);
+ const numberResult=await w.recognize(bottom);
+ let nameText=nameResult.data?.text||'',numberText=numberResult.data?.text||'';
+ let number=detectNumber(numberText)||detectNumber(nameText);
+ let name=credibleName(nameText,nameResult.data?.confidence||0);
+ // If the strong-contrast crop didn't produce a readable result, retry natural-color crops.
+ if(!name||!number){
+   const naturalTop=await crop(image,'top');
+   const naturalBottom=await crop(image,'bottom');
+   if(!name){const result=await w.recognize(naturalTop);nameText+='\n[original name area]\n'+(result.data?.text||'');name=credibleName(result.data?.text||'',result.data?.confidence||0);}
+   if(!number){const result=await w.recognize(naturalBottom);numberText+='\n[original number area]\n'+(result.data?.text||'');number=detectNumber(result.data?.text||'');}
+ }
+ // An OCR result is a suggestion, never a confirmed identification.
+ $('ocrTextBox').classList.remove('hidden');
+ $('ocrText').textContent='NAME AREA:\n'+nameText+'\n\nNUMBER AREA:\n'+numberText;
+ const query=number?number:name;
+ if(query){
+   $('searchText').value=query;
+   status('OCR suggestion: '+query+'. Checking real card database…');
+   await searchCards(query,true);
+   // On ambiguous OCR we retain the batch scan and let the user choose artwork.
+ }else{
+   $('searchText').value='';
+   status('Could not read a reliable card name or collector number. Keep the entire card including its top and bottom borders inside the green frame, and hold steady. You can also search by card name below.','error');
+ }
+}catch(e){status('Scan #'+record.sequence+' saved, but recognition failed: '+e.message+'. Try a sharp saved photo or manual search.','error');
+}finally{ocrBusy=false;$('scanNow').disabled=!stream;}
+}
 function exportCSV(scans,filename){const cols=['Batch Number','Batch Label','Scan Number','Scanned Local Date Time','Scan ISO Timestamp','Status','Game','Card Name','Set','Card Number','Variant','Condition','Market Price USD','Pricing Source','Pricing Updated At','Last Edited At','Scan Method','Card ID'];const vals=s=>[s.batchId,data.batches.find(b=>b.id===s.batchId)?.label||'',s.sequence,dt(s.scannedAt),s.scannedAt,s.status,s.game,s.name,s.setName,s.cardNumber,s.variant,s.condition,Number.isFinite(s.priceUSD)?s.priceUSD:'',s.pricingSource,s.pricingUpdatedAt,s.lastEditedAt||s.recordedAt,s.method,s.cardId];const csv='\ufeff'+[cols,...scans.map(vals)].map(row=>row.map(v=>{let t=String(v??'');if(/^[\s]*[=+\-@]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');download(new Blob([csv],{type:'text/csv;charset=utf-8'}),filename);}
 function download(blob,filename){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
 function restore(file){file.text().then(txt=>{const incoming=JSON.parse(txt);if(incoming.version!==1||!Array.isArray(incoming.batches)||!Array.isArray(incoming.scans)||incoming.batches.some(x=>typeof x.id!=='string')||incoming.scans.some(x=>typeof x.id!=='string'||typeof x.batchId!=='string'))throw new Error('Invalid Cosmic Scanner backup');if(!confirm(`Replace this device's ${data.scans.length} current scans with ${incoming.scans.length} backed-up scans? Export a backup first if needed.`))return;data=incoming;pendingId=null;selected=null;ensureBatch();persist();render();status('Backup restored successfully.','ok');switchView('history');}).catch(e=>alert('Could not restore backup: '+e.message));}
