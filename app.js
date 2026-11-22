@@ -120,7 +120,7 @@ function credibleName(text,confidence=0){
  return name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/, '').trim();
 }
 
-const POKEDEX_STORE='cosmic-pokedex-species-v1';
+const POKEDEX_STORE='cosmic-card-name-lexicon-v3';
 let pokedexPromise=null;
 const normalizePokemon=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
 function pokemonDisplay(s){return String(s||'').split('-').map(v=>v.charAt(0).toUpperCase()+v.slice(1)).join(' ').replace(/^Mr Mime$/,'Mr. Mime').replace(/^Mime Jr$/,'Mime Jr.').replace(/^Type Null$/,'Type: Null');}
@@ -128,18 +128,26 @@ async function getPokemonLexicon(){
  if(pokedexPromise)return pokedexPromise;
  pokedexPromise=(async()=>{
   let saved=null;try{saved=JSON.parse(localStorage.getItem(POKEDEX_STORE)||'null');}catch{}
-  if(Array.isArray(saved)&&saved.length>=1025)return saved;
-  const response=await fetch('https://pokeapi.co/api/v2/pokemon-species?limit=1025',{headers:{Accept:'application/json'}});
-  if(!response.ok)throw new Error('Pokédex download failed ('+response.status+')');
-  const json=await response.json();
-  const names=(json.results||[]).map(x=>pokemonDisplay(x.name)).filter(Boolean);
-  if(names.length<1025)throw new Error('Pokédex list was incomplete');
-  // Add TCG naming variants and commonly printed forms, not just the 1025 base species.
-  const extras=['Galarian Moltres','Galarian Articuno','Galarian Zapdos','Galarian Slowpoke','Galarian Slowbro','Galarian Slowking','Alolan Meowth','Galarian Meowth','Alolan Vulpix','Alolan Ninetales','Alolan Exeggutor','Alolan Raichu','Hisuian Zoroark','Hisuian Growlithe','Hisuian Arcanine','Hisuian Samurott','Hisuian Typhlosion','Hisuian Decidueye','Paldean Wooper','Paldean Tauros'];
-  const all=[...new Set([...names,...extras])];
-  try{localStorage.setItem(POKEDEX_STORE,JSON.stringify(all));}catch{}
-  return all;
- })().catch(e=>{pokedexPromise=null;throw e;});
+  if(saved&&Array.isArray(saved.names)&&saved.names.length>1100&&Date.now()-saved.fetchedAt<30*86400000)return saved.names;
+  // Use *printed TCG names*, not only base species: V/VMAX/VSTAR, ex/EX, Mega, regional forms, etc.
+  let names=[];
+  try{
+   const res=await fetch('https://api.tcgdex.net/v2/en/cards',{headers:{Accept:'application/json'}});
+   if(!res.ok)throw new Error('TCGdex status '+res.status);
+   const cards=await res.json();
+   if(!Array.isArray(cards)||cards.length<5000)throw new Error('Incomplete card catalog');
+   names=cards.map(c=>c.name).filter(x=>typeof x==='string'&&x.length>=3);
+  }catch(error){console.warn('Full card names unavailable; fallback to species',error);}
+  try{
+   const res=await fetch('https://pokeapi.co/api/v2/pokemon-species?limit=1025');
+   if(res.ok){const data=await res.json();names.push(...(data.results||[]).map(x=>pokemonDisplay(x.name)));}
+  }catch(error){console.warn('Species list unavailable',error);}
+  names.push('Galarian Moltres','Galarian Articuno','Galarian Zapdos','Alolan Meowth','Galarian Meowth','Hisuian Zoroark','Paldean Wooper');
+  const unique=[...new Set(names)];
+  if(unique.length<1025)throw new Error('Card-name dictionary unavailable');
+  try{localStorage.setItem(POKEDEX_STORE,JSON.stringify({fetchedAt:Date.now(),names:unique}));}catch{}
+  return unique;
+ })().catch(err=>{pokedexPromise=null;throw err;});
  return pokedexPromise;
 }
 function editDistance(a,b){
@@ -232,13 +240,13 @@ async function performOCR(image,method){
   $('ocrText').textContent=attempts.map(a=>a.label.toUpperCase()+' ('+Math.round(a.confidence)+'%):\n'+a.value).join('\n\n-----\n\n');
   let fuzzy=[];
   try{
-   status('Matching text against the full 1,025-species Pokédex…');
+   status('Matching against printed Pokémon card names and forms…');
    const lexicon=await getPokemonLexicon();
    fuzzy=closestPokemon(nameResults.map(r=>r.value).join(' '),lexicon);
   }catch(e){console.warn('Pokédex unavailable; falling back to OCR text',e);}
   const fuzzyNames=fuzzy.filter(x=>x.score>=.78).map(x=>x.name);
   const searches=[number,...fuzzyNames,...plausible,bestName,...uniqueNames].filter(Boolean);
-  if(fuzzy.length){$('ocrText').textContent+='\n\nPOKÉDEX NAME SUGGESTIONS:\n'+fuzzy.map(x=>x.name+' ('+Math.round(x.score*100)+'% text similarity)').join('\n');}
+  if(fuzzy.length){$('ocrText').textContent+='\n\nPRINTED CARD NAME SUGGESTIONS:\n'+fuzzy.map(x=>x.name+' ('+Math.round(x.score*100)+'% text similarity)').join('\n');}
   let success=false;
   for(const q of [...new Set(searches)].slice(0,9)){
     $('searchText').value=q;
