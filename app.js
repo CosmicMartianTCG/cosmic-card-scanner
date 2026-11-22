@@ -51,7 +51,7 @@ if(query.total){const official=setForCard(card,catalog)?.cardCount?.official;if(
 return score;}
 
 
-async function searchCards(phrase,fromOCR=false){if(searchBusy)return;const parsed=parseQuery(phrase);if(!parsed.name&&!parsed.number){status('Type a card name or collector number.','error');return;}searchBusy=true;$('results').innerHTML='';$('candidate').classList.add('hidden');selected=null;status('Searching the free Pokémon card catalog…');try{
+async function searchCards(phrase,fromOCR=false){if(searchBusy)return;if(!fromOCR)capturedPreview=null;const parsed=parseQuery(phrase);if(!parsed.name&&!parsed.number){status('Type a card name or collector number.','error');return;}searchBusy=true;$('results').innerHTML='';$('candidate').classList.add('hidden');selected=null;status('Searching the free Pokémon card catalog…');try{
 let found=[];window.__cosmicCandidates=[];if(parsed.number){
  const ids=[parsed.number];const normalized=normalizeId(parsed.number);if(normalized.toUpperCase()!==parsed.number.toUpperCase())ids.push(normalized);
  for(const id of ids){const list=await api(API+'?localId='+encodeURIComponent(id));if(!Array.isArray(list))throw new Error('Unexpected card catalog response');for(const card of list){if(normalizeId(card.localId)===normalized&&!found.some(x=>x.id===card.id))found.push(card);}if(found.length)break;}
@@ -82,10 +82,8 @@ async function chooseCard(id){
  // Stage 3: verify artwork BEFORE downloading a detailed card record and its pricing.
  status('Loading reference artwork for comparison…');
  try{
-  const all=await api(API+'?id='+encodeURIComponent(id));
-  const summary=Array.isArray(all)?all.find(c=>c.id===id):null;
-  // The list endpoint may not support filtering IDs. Use summary from last results if available.
-  const card=summary||window.__cosmicCandidates?.find(c=>c.id===id);
+  // Use the catalog summary already retrieved. Do not request pricing before confirmation.
+  const card=window.__cosmicCandidates?.find(c=>c.id===id);
   if(!card)throw new Error('Card summary unavailable; try the search again.');
   selected=null;
   const c=$('candidate');
