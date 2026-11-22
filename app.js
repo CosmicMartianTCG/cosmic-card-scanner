@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='3.3';
+const VERSION='3.4';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
