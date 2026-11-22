@@ -108,19 +108,16 @@ function detectName(text){const lines=String(text||'').split(/[\r\n]+/).map(x=>x
 for(const raw of lines){let x=raw.replace(/\bHP\s*\d+.*$/i,'').replace(/[^A-Za-z0-9 '\-]/g,'').trim();if(x.length>=3&&x.length<=45&&/[A-Za-z]{3}/.test(x)&&!skip.test(x)&&!/^\d/.test(x))return x;}
 return '';}
 function credibleName(text,confidence=0){
- // Pokémon card names are often correctly read within an otherwise garbled line.
- // Prefer a word with natural name capitalization rather than an entire OCR line.
- const lines=String(text||'').split(/[\\r\\n]+);
+ // A correctly read card name may be embedded in a noisy OCR line.
  const ignore=new Set(['Basic','Stage','Trainer','Energy','Pokemon','Pokémon','Name','Area','Original','Number','Illustrator','Retreat','Resistance','Weakness','Ability','Search']);
- for(const line of lines.slice(0,14)){
-   const words=[...line.matchAll(/\\b[A-Z][a-z]{3,}(?:[-'][A-Za-z]+)?\\b/g)].map(m=>m[0]);
+ for(const line of String(text||'').split(/[\r\n]+/).slice(0,14)){
+   const words=[...line.matchAll(/\b[A-Z][a-z]{3,}(?:[-'][A-Za-z]+)?\b/g)].map(m=>m[0]);
    const best=words.find(w=>!ignore.has(w));
    if(best)return best;
  }
  const name=detectName(text);
  if(!name||confidence<45||name.length>35)return '';
- if(/[|\\\\\\/=]{2,}/.test(text))return '';
- return name.replace(/\\s+[a-zA-Z]{0,3}\\d{1,3}$/, '').trim();
+ return name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/, '').trim();
 }
 async function performOCR(image,method){if(ocrBusy)return;ocrBusy=true;const record=newScan(method);selected=null;$('candidate').classList.add('hidden');$('results').innerHTML='';$('scanNow').disabled=true;status('Scan #'+String(record.sequence).padStart(3,'0')+' saved with timestamp. Reading card name and collector number…');
 try{
