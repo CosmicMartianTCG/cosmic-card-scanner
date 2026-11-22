@@ -18,10 +18,10 @@
   <div class="app">
     <header class="topbar">
       <div class="brand"><img src="./icon-192.png" alt="Cosmic Martian CM logo"/><div><strong>COSMIC</strong><span>CARD SCANNER</span></div></div>
-      <div class="version">V2 · FREE</div>
+      <div class="version">V2.1 · FREE</div>
     </header>
     <main>
-      <div class="intro"><div class="kicker">YOUR COLLECTION. YOUR DATA. · V2</div><h1>Scan. Price.<br><em>Collect.</em></h1><p>Pokémon cards · Free lookup · Private batch log</p></div>
+      <div class="intro"><div class="kicker">YOUR COLLECTION. YOUR DATA. · V2.1</div><h1>Scan. Price.<br><em>Collect.</em></h1><p>Pokémon cards · Free lookup · Private batch log</p></div>
       <section class="batch-overview panel">
         <div class="batch-header"><div><label>ACTIVE BATCH</label><div class="batch-line"><h2 id="batchId">—</h2><button class="icon-btn" id="copyBatch" aria-label="Copy batch number" title="Copy batch number">⧉</button></div><div class="subtle" id="batchStarted">—</div></div><button id="newBatch" class="btn secondary small">+ New batch</button></div>
         <div class="stats"><div><span id="batchCount">0</span><small>CARDS</small></div><div><span id="batchTotal">$0.00</span><small>BATCH VALUE</small></div><div><span id="overallCount">0</span><small>ALL SCANS</small></div></div>
@@ -31,17 +31,17 @@
       <section id="scanView" class="view active">
         <div class="panel camera-panel">
           <div class="eyebrow"><span class="pulse"></span> CAMERA SCANNER <span id="cameraState" class="right subtle">Not started</span></div>
-          <div class="camera-stage" id="cameraStage"><video id="camera" autoplay muted playsinline webkit-playsinline></video><div class="card-guide"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span></div><div class="camera-placeholder" id="placeholder"><div class="scanner-illustration">▣</div><h3>Ready to scan</h3><p>Start the camera and hold one card inside the frame.</p></div></div>
+          <div class="camera-stage" id="cameraStage"><video id="camera" autoplay muted playsinline webkit-playsinline></video><div class="card-guide"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span></div><div class="camera-placeholder" id="placeholder"><div class="scanner-illustration">▣</div><h3>Ready to scan</h3><p>Start the camera and fill the green frame with one card.</p></div></div>
           <div class="camera-actions"><button id="startCamera" class="btn secondary">Start camera</button><button id="scanNow" class="btn primary" disabled>◉ Scan card</button></div>
           <div class="or"><span>OR USE YOUR CAMERA / A SAVED PHOTO</span></div>
           <label class="btn upload" for="photoFile">📷 Take or select photo</label><input id="photoFile" type="file" accept="image/*" capture="environment" hidden />
-          <p class="fineprint">OCR runs on your device, not a paid AI API. First scan may take longer while its free language model loads.</p>
+          <p class="fineprint">Fill the green outline with one upright card. Avoid glare, keep its name and bottom card number visible, then tap Scan card. Recognition runs on your iPhone.</p>
         </div>
         <section class="panel lookup-panel">
           <div class="section-heading"><h3>Manual search / correct a scan</h3><span class="subtle">Pokémon (English)</span></div>
           <div class="searchline"><input id="searchText" placeholder="Name or card number, e.g. Charizard 199/165" autocomplete="off" /><button id="searchBtn" class="btn primary small">Search</button></div>
           <div id="scanStatus" class="status" role="status">Ready for your first card. Every scan gets a timestamp and batch ID.</div>
-          <div id="ocrTextBox" class="ocr-box hidden"><div class="eyebrow">TEXT DETECTED <button id="toggleOCR" class="text-btn">Hide</button></div><pre id="ocrText"></pre></div>
+          <div id="ocrTextBox" class="ocr-box hidden"><div class="eyebrow">TEXT DETECTED <button id="toggleOCR" class="text-btn">Hide</button></div><img id="scanPreview" class="scan-preview hidden" alt="The area the scanner actually examined" /><pre id="ocrText"></pre></div>
           <div id="results" class="results"></div>
           <div id="candidate" class="candidate hidden"></div>
         </section>
