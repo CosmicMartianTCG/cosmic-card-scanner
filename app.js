@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.3';
+const VERSION='2.4';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -107,7 +107,21 @@ return matches.at(-1)?.[0].replace(/\s+/g,'')||'';}
 function detectName(text){const lines=String(text||'').split(/[\r\n]+/).map(x=>x.trim()).filter(Boolean);const skip=/^(BASIC|STAGE\s*\d*|TRAINER|ENERGY|POK[EÉ]MON|HP\s*\d+|EVOLVES|RULE|ILLUS|NO\.|\d+\s*(HP|\/))/i;
 for(const raw of lines){let x=raw.replace(/\bHP\s*\d+.*$/i,'').replace(/[^A-Za-z0-9 '\-]/g,'').trim();if(x.length>=3&&x.length<=45&&/[A-Za-z]{3}/.test(x)&&!skip.test(x)&&!/^\d/.test(x))return x;}
 return '';}
-function credibleName(text,confidence=0){const s=detectName(text);if(!s||confidence<45||s.length>35)return '';if(/[|\\\/=]{2,}/.test(text))return '';const letters=(s.match(/[a-z]/gi)||[]).length;if(letters<Math.max(3,s.length*.55))return '';return s;}
+function credibleName(text,confidence=0){
+ // Pokémon card names are often correctly read within an otherwise garbled line.
+ // Prefer a word with natural name capitalization rather than an entire OCR line.
+ const lines=String(text||'').split(/[\\r\\n]+);
+ const ignore=new Set(['Basic','Stage','Trainer','Energy','Pokemon','Pokémon','Name','Area','Original','Number','Illustrator','Retreat','Resistance','Weakness','Ability','Search']);
+ for(const line of lines.slice(0,14)){
+   const words=[...line.matchAll(/\\b[A-Z][a-z]{3,}(?:[-'][A-Za-z]+)?\\b/g)].map(m=>m[0]);
+   const best=words.find(w=>!ignore.has(w));
+   if(best)return best;
+ }
+ const name=detectName(text);
+ if(!name||confidence<45||name.length>35)return '';
+ if(/[|\\\\\\/=]{2,}/.test(text))return '';
+ return name.replace(/\\s+[a-zA-Z]{0,3}\\d{1,3}$/, '').trim();
+}
 async function performOCR(image,method){if(ocrBusy)return;ocrBusy=true;const record=newScan(method);selected=null;$('candidate').classList.add('hidden');$('results').innerHTML='';$('scanNow').disabled=true;status('Scan #'+String(record.sequence).padStart(3,'0')+' saved with timestamp. Reading card name and collector number…');
 try{
  const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
