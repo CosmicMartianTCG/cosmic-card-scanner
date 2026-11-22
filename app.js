@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='3.1';
+const VERSION='3.2';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -253,7 +253,7 @@ function perspectiveFrame(){
  }finally{to?.delete();from?.delete();matrix?.delete();dst?.delete();src?.delete();}
 }
 
-async function startCamera(){if(stream){stopCamera();return;}if(!navigator.mediaDevices?.getUserMedia){status('This browser cannot start live camera. Use Take or select photo below. A secure HTTPS site is needed.','error');return;}try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1920}}});$('camera').srcObject=stream;await $('camera').play();$('cameraStage').classList.add('live');$('scanNow').disabled=false;$('startCamera').textContent='Stop camera';$('cameraState').textContent='Live';status('Hold one card in view. The green border will follow detected edges.');startTracking();}catch(e){status('Camera permission failed. Use Take or select photo below, or allow camera access in Safari settings.','error');}}
+async function startCamera(){if(stream){stopCamera();return;}if(!navigator.mediaDevices?.getUserMedia){status('This browser cannot start live camera. Use Take or select photo below. A secure HTTPS site is needed.','error');return;}try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:960},height:{ideal:1280}}});$('camera').srcObject=stream;await $('camera').play();$('cameraStage').classList.add('live');$('scanNow').disabled=false;$('startCamera').textContent='Stop camera';$('cameraState').textContent='Live';status('Camera ready. Automatic border tracking is temporarily disabled to prevent iPhone freezes; tap Scan card to identify.');trackerLabel('Safe camera mode · border tracking paused');}catch(e){status('Camera permission failed. Use Take or select photo below, or allow camera access in Safari settings.','error');}}
 function stopCamera(){stopTracking();for(const track of stream?.getTracks()||[])track.stop();stream=null;$('camera').srcObject=null;$('cameraStage').classList.remove('live');$('scanNow').disabled=true;$('startCamera').textContent='Start camera';$('cameraState').textContent='Not started';}
 function liveFrame(){const video=$('camera');const w=video.videoWidth,h=video.videoHeight;if(!w||!h)throw new Error('Camera is not ready');
 // The preview uses object-fit:cover. Map the visible green guide to original camera pixels.
@@ -450,7 +450,7 @@ $('newBatch').addEventListener('click',()=>{if(!confirm('Start a new numbered ba
 $('copyBatch').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(data.activeBatchId||'');status('Batch number copied.','ok');}catch{status('Batch number: '+data.activeBatchId);}});
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
 $('startCamera').addEventListener('click',startCamera);
-$('scanNow').addEventListener('click',async()=>{if(!stream||ocrBusy)return;try{await performOCR(perspectiveFrame()||liveFrame(),'live camera');}catch(e){status('Could not capture image: '+e.message,'error');}});
+$('scanNow').addEventListener('click',async()=>{if(!stream||ocrBusy)return;try{await performOCR(liveFrame(),'live camera');}catch(e){status('Could not capture image: '+e.message,'error');}});
 $('photoFile').addEventListener('change',async e=>{const f=e.target.files?.[0];e.target.value='';if(!f||ocrBusy)return;try{const img=await imageFromFile(f);await performOCR(img,'photo');}catch(err){status('Photo could not be processed: '+err.message,'error');}});
 $('searchBtn').addEventListener('click',()=>searchCards($('searchText').value));$('searchText').addEventListener('keydown',e=>{if(e.key==='Enter')searchCards($('searchText').value);});
 $('results').addEventListener('click',e=>{const btn=e.target.closest('button[data-card]');if(btn)chooseCard(btn.dataset.card);});
