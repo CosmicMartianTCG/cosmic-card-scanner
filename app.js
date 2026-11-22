@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.4';
+const VERSION='2.5';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -143,11 +143,26 @@ try{
  $('ocrText').textContent='NAME AREA:\n'+nameText+'\n\nNUMBER AREA:\n'+numberText;
  // Keep OCR noise like "wb0" out of card names unless it is a verified collector number.
  const cleanedName=name?name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/,'').trim(): '';
- const query=number?number:(cleanedName||name);
+ // Prefer a plausible Pokémon name found anywhere in OCR output over noisy suffixes.
+ const tokens=[...String(nameText+'\n'+numberText).matchAll(/\b[A-Z][a-z]{3,}(?:[-'][A-Za-z]+)?\b/g)].map(m=>m[0]);
+ const stop=new Set(['Basic','Stage','Trainer','Retreat','Resistance','Weakness','Pokemon','Pokémon','Name','Area','Original','Number','Illustrator','Attack','Energy','Ability']);
+ const guesses=[cleanedName||name,...tokens.filter(w=>!stop.has(w))].filter(Boolean);
+ const query=number||guesses[0]||'';
+ // Keep possible names available when the first OCR guess cannot be found.
+ const extraGuesses=[...new Set(guesses)].filter(w=>w!==query);
+
  if(query){
    $('searchText').value=query;
    status('OCR suggestion: '+query+'. Checking real card database…');
    await searchCards(query,true);
+   // If the OCR guess has no match, retry with other words spotted on the card.
+   // Never automatically confirm a printing based on fuzzy OCR.
+   if(!$('results').querySelector('button[data-card]')&&!selected){
+     for(const guess of extraGuesses.slice(0,5)){
+       await searchCards(guess,true);
+       if($('results').querySelector('button[data-card]')||selected){$('searchText').value=guess;break;}
+     }
+   }
    // On ambiguous OCR we retain the batch scan and let the user choose artwork.
  }else{
    $('searchText').value='';
