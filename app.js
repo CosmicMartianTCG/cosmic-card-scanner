@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.2';
+const VERSION='2.3';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -56,7 +56,19 @@ let found=[];if(parsed.number){
  const ids=[parsed.number];const normalized=normalizeId(parsed.number);if(normalized.toUpperCase()!==parsed.number.toUpperCase())ids.push(normalized);
  for(const id of ids){const list=await api(API+'?localId='+encodeURIComponent(id));if(!Array.isArray(list))throw new Error('Unexpected card catalog response');for(const card of list){if(normalizeId(card.localId)===normalized&&!found.some(x=>x.id===card.id))found.push(card);}if(found.length)break;}
 }
-if(!found.length&&parsed.name){const terms=[parsed.name,...parsed.name.split(/\s+/).filter(x=>x.length>=4)];for(const term of [...new Set(terms)].slice(0,3)){const list=await api(API+'?name='+encodeURIComponent(term));if(!Array.isArray(list))throw new Error('Unexpected card catalog response');if(list.length){found=list;break;}}}
+if(!found.length&&parsed.name){
+ // OCR can read a real name followed by random glyphs: "Meowth wb0" → "Meowth".
+ // Try the full phrase first, then clean individual words, then the first word.
+ const clean=parsed.name.replace(/[^a-zA-Z0-9 éÉ'-]/g,' ').replace(/\s+/g,' ').trim();
+ const words=clean.split(' ').filter(Boolean);
+ const likely=words.filter(w=>/^[a-zA-ZÀ-ÿ'-]{3,}$/.test(w));
+ const terms=[parsed.name,clean,likely.join(' '),...likely,...words.filter(w=>w.length>=3&&!/\d/.test(w))];
+ for(const term of [...new Set(terms.map(x=>x.trim()).filter(Boolean))].slice(0,7)){
+   const list=await api(API+'?name='+encodeURIComponent(term));
+   if(!Array.isArray(list))throw new Error('Unexpected card catalog response');
+   if(list.length){found=list;break;}
+ }
+}
 let catalog=null;if(parsed.total&&found.length>1)catalog=await getSetCatalog();
 found.sort((a,b)=>scoreCard(b,parsed,catalog)-scoreCard(a,parsed,catalog));const count=found.length;found=found.slice(0,65);
 if(!count){status(`No matching card found for “${phrase}”. Edit the detected text or search by card name below.`,'error');return;}
@@ -118,7 +130,9 @@ try{
  // An OCR result is a suggestion, never a confirmed identification.
  $('ocrTextBox').classList.remove('hidden');
  $('ocrText').textContent='NAME AREA:\n'+nameText+'\n\nNUMBER AREA:\n'+numberText;
- const query=number?number:name;
+ // Keep OCR noise like "wb0" out of card names unless it is a verified collector number.
+ const cleanedName=name?name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/,'').trim(): '';
+ const query=number?number:(cleanedName||name);
  if(query){
    $('searchText').value=query;
    status('OCR suggestion: '+query+'. Checking real card database…');
