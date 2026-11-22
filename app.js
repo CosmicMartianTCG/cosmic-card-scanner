@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.7';
+const VERSION='2.8';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -119,67 +119,80 @@ function credibleName(text,confidence=0){
  if(!name||confidence<45||name.length>35)return '';
  return name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/, '').trim();
 }
-async function performOCR(image,method){if(ocrBusy)return;ocrBusy=true;const record=newScan(method);selected=null;$('candidate').classList.add('hidden');$('results').innerHTML='';$('scanNow').disabled=true;status('Scan #'+String(record.sequence).padStart(3,'0')+' saved with timestamp. Reading card name and collector number…');
-try{
- const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
- const w=await worker();
- // Attempt to read the name from the top edge and collector number from the lower edge.
- const top=await cropRegion(image,.035,.012,.93,.27,true);
- const bottom=await cropRegion(image,.015,.68,.97,.315,true);
- const nameResult=await w.recognize(top);
- const numberResult=await w.recognize(bottom);
- let nameText=nameResult.data?.text||'',numberText=numberResult.data?.text||'';
- let number=detectNumber(numberText)||detectNumber(nameText);
- let name=credibleName(nameText,nameResult.data?.confidence||0);
- // If the strong-contrast crop didn't produce a readable result, retry natural-color crops.
- if(!name||!number){
-   const naturalTop=await crop(image,'top');
-   const naturalBottom=await crop(image,'bottom');
-   if(!name){const result=await w.recognize(naturalTop);nameText+='\n[original name area]\n'+(result.data?.text||'');name=credibleName(result.data?.text||'',result.data?.confidence||0);}
-   if(!number){const result=await w.recognize(naturalBottom);numberText+='\n[original number area]\n'+(result.data?.text||'');number=detectNumber(result.data?.text||'');}
- }
- // An OCR result is a suggestion, never a confirmed identification.
- $('ocrTextBox').classList.remove('hidden');
- $('ocrText').textContent='NAME AREA:\n'+nameText+'\n\nNUMBER AREA:\n'+numberText;
- // Keep OCR noise like "wb0" out of card names unless it is a verified collector number.
- const cleanedName=name?name.replace(/\s+[a-zA-Z]{0,3}\d{1,3}$/,'').trim(): '';
- // Prefer a plausible Pokémon name found anywhere in OCR output over noisy suffixes.
- const tokens=[...String(nameText+'\n'+numberText).matchAll(/\b[A-Z][a-z]{3,}(?:[-'][A-Za-z]+)?\b/g)].map(m=>m[0]);
- const stop=new Set(['Basic','Stage','Trainer','Retreat','Resistance','Weakness','Pokemon','Pokémon','Name','Area','Original','Number','Illustrator','Attack','Energy','Ability']);
- const guesses=[cleanedName||name,...tokens.filter(w=>!stop.has(w))].filter(Boolean);
- const query=number||guesses[0]||'';
- // Keep possible names available when the first OCR guess cannot be found.
- const extraGuesses=[...new Set(guesses)].filter(w=>w!==query);
- // Match distinctive combinations of printed name and attacks when collector-number OCR fails.
- // Verified against official Pokémon HeartGold & SoulSilver card list: Meowth 75/123.
- const visibleText=(nameText+'\n'+numberText).toLowerCase();
- const signatureCard=/\bmeowth\b/i.test(visibleText)&&/dig\s*claws/i.test(visibleText)?'hgss1-75':null;
-
- if(signatureCard){
-   $('searchText').value='Meowth 75/123';
+async function performOCR(image,method){
+ if(ocrBusy)return;
+ ocrBusy=true;
+ const record=newScan(method);
+ selected=null;
+ $('candidate').classList.add('hidden');
+ $('results').innerHTML='';
+ $('scanNow').disabled=true;
+ status('Scan #'+String(record.sequence).padStart(3,'0')+' saved. Checking card title and collector number…');
+ try{
+  const preview=$('scanPreview');if(preview){preview.src=image;preview.classList.remove('hidden');}
+  const w=await worker();
+  // Treat text at the top, number near the bottom, and main picture as separate areas.
+  // Plain-color narrow strip preserves decorative card lettering better than thresholding the whole top third.
+  const nameStrip=await cropRegion(image,.055,.035,.89,.20,false);
+  const nameStripHigh=await cropRegion(image,.055,.035,.89,.20,true);
+  const numberStrip=await cropRegion(image,.02,.82,.96,.17,false);
+  const broadBottom=await cropRegion(image,.01,.67,.98,.32,false);
+  const broadTop=await cropRegion(image,.02,.00,.96,.34,false);
+  const attempts=[];
+  const recognize=async (img,psm,label)=>{
    try{
-     await chooseCard(signatureCard);
-     status('Possible match from name + attacks: Meowth 75/123 (HeartGold & SoulSilver). Confirm artwork and printing before saving.','ok');
-   }catch(e){status('Signature match needs manual confirmation: '+e.message,'error');}
- }else if(query){
-   $('searchText').value=query;
-   status('OCR suggestion: '+query+'. Checking real card database…');
-   await searchCards(query,true);
-   // If the OCR guess has no match, retry with other words spotted on the card.
-   // Never automatically confirm a printing based on fuzzy OCR.
-   if(!$('results').querySelector('button[data-card]')&&!selected){
-     for(const guess of extraGuesses.slice(0,5)){
-       await searchCards(guess,true);
-       if($('results').querySelector('button[data-card]')||selected){$('searchText').value=guess;break;}
-     }
+    await w.setParameters({tessedit_pageseg_mode:String(psm)});
+    const result=await w.recognize(img);
+    const value=String(result.data?.text||'').trim();
+    attempts.push({label,value,confidence:Number(result.data?.confidence)||0});
+   }catch(error){attempts.push({label,value:'',confidence:0});}
+  };
+  await recognize(nameStrip,7,'name line');
+  await recognize(nameStripHigh,7,'high contrast name line');
+  await recognize(broadTop,6,'upper card');
+  await recognize(numberStrip,6,'collector number');
+  await recognize(broadBottom,6,'lower card');
+  await w.setParameters({tessedit_pageseg_mode:'3'}).catch(()=>{});
+  const nameResults=attempts.slice(0,3),numberResults=attempts.slice(3);
+  const names=[];
+  for(const result of nameResults){
+   const lines=result.value.split(/\n+/);
+   for(const line of lines){
+    const cleaned=line.replace(/[^A-Za-zÀ-ÿ0-9 '\-]/g,' ').replace(/\s+/g,' ').trim()
+    .replace(/\s+HP\s*\d+.*$/i,'').replace(/\s+\d{2,3}\s*$/,'');
+    if(cleaned.length>=4&&cleaned.length<=36&&!/^(Basic|Stage|Trainer|Energy|Pokemon|Pokémon|HP)\b/i.test(cleaned)){
+      names.push(cleaned);
+      const tokens=cleaned.match(/[A-Z][a-z]{3,}/g)||[];
+      for(const token of tokens)if(token.length>=4)names.push(token);
+    }
    }
-   // On ambiguous OCR we retain the batch scan and let the user choose artwork.
- }else{
-   $('searchText').value='';
-   status('Could not read a reliable card name or collector number. Keep the entire card including its top and bottom borders inside the green frame, and hold steady. You can also search by card name below.','error');
+  }
+  const numbers=numberResults.map(r=>detectNumber(r.value)).filter(Boolean);
+  const number=numbers[0]||detectNumber(attempts.map(a=>a.value).join('\n'));
+  const uniqueNames=[...new Set(names)];
+  const plausible=uniqueNames.filter(n=>!/\d/.test(n)&&!/(?:^|\s)(?:BASIC|Pay|Claws|Ability|Weakness|Retreat|Resistance)(?:\s|$)/i.test(n));
+  const bestName=plausible.find(n=>n.includes(' '))||plausible[0]||'';
+  $('ocrTextBox').classList.remove('hidden');
+  $('ocrText').textContent=attempts.map(a=>a.label.toUpperCase()+' ('+Math.round(a.confidence)+'%):\n'+a.value).join('\n\n-----\n\n');
+  const searches=[number,...plausible,bestName,...uniqueNames].filter(Boolean);
+  let success=false;
+  for(const q of [...new Set(searches)].slice(0,9)){
+    $('searchText').value=q;
+    await searchCards(q,true);
+    if(selected||$('results').querySelector('button[data-card]')){success=true;break;}
+  }
+  if(!success){
+   $('searchText').value=number||bestName||'';
+   status('The card photo was captured, but automatic identification is uncertain. Try entering the Pokémon name or printed card number below. Your timestamped scan is saved.','error');
+  }else{
+   status('Possible cards found. Confirm the picture, collector number, and foil type before saving.','ok');
+  }
+ }catch(error){
+   status('Scan #'+record.sequence+' saved. Recognition failed: '+error.message+'. Try manual search.','error');
+ }finally{
+   ocrBusy=false;
+   $('scanNow').disabled=!stream;
  }
-}catch(e){status('Scan #'+record.sequence+' saved, but recognition failed: '+e.message+'. Try a sharp saved photo or manual search.','error');
-}finally{ocrBusy=false;$('scanNow').disabled=!stream;}
 }
 function exportCSV(scans,filename){const cols=['Batch Number','Batch Label','Scan Number','Scanned Local Date Time','Scan ISO Timestamp','Status','Game','Card Name','Set','Card Number','Variant','Condition','Market Price USD','Pricing Source','Pricing Updated At','Last Edited At','Scan Method','Card ID'];const vals=s=>[s.batchId,data.batches.find(b=>b.id===s.batchId)?.label||'',s.sequence,dt(s.scannedAt),s.scannedAt,s.status,s.game,s.name,s.setName,s.cardNumber,s.variant,s.condition,Number.isFinite(s.priceUSD)?s.priceUSD:'',s.pricingSource,s.pricingUpdatedAt,s.lastEditedAt||s.recordedAt,s.method,s.cardId];const csv='\ufeff'+[cols,...scans.map(vals)].map(row=>row.map(v=>{let t=String(v??'');if(/^[\s]*[=+\-@]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');download(new Blob([csv],{type:'text/csv;charset=utf-8'}),filename);}
 function download(blob,filename){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
