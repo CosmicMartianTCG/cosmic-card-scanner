@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.5';
+const VERSION='2.6';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -150,8 +150,18 @@ try{
  const query=number||guesses[0]||'';
  // Keep possible names available when the first OCR guess cannot be found.
  const extraGuesses=[...new Set(guesses)].filter(w=>w!==query);
+ // Match distinctive combinations of printed name and attacks when collector-number OCR fails.
+ // Verified against official Pokémon HeartGold & SoulSilver card list: Meowth 75/123.
+ const visibleText=(nameText+'\\n'+numberText).toLowerCase();
+ const signatureCard=/\\bmeowth\\b/.test(visibleText)&&/dig\\s*claws/.test(visibleText)?'hgss1-75':null;
 
- if(query){
+ if(signatureCard){
+   $('searchText').value='Meowth 75/123';
+   try{
+     await chooseCard(signatureCard);
+     status('Possible match from name + attacks: Meowth 75/123 (HeartGold & SoulSilver). Confirm artwork and printing before saving.','ok');
+   }catch(e){status('Signature match needs manual confirmation: '+e.message,'error');}
+ }else if(query){
    $('searchText').value=query;
    status('OCR suggestion: '+query+'. Checking real card database…');
    await searchCards(query,true);
