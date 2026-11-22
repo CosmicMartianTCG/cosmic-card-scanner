@@ -23,3 +23,10 @@ button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible
 .camera-stage.live .card-guide{opacity:1;z-index:3}
 .camera-placeholder{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:auto}
 .camera-stage.live .camera-placeholder{display:none}
+
+/* V3.4: constrain captured-photo previews and prevent iOS horizontal overflow */
+html,body{max-width:100%;overflow-x:hidden}
+.app,.panel,.lookup-panel,.ocr-box,.results,.candidate{min-width:0;max-width:100%}
+.ocr-box{overflow:hidden}
+.scan-preview,.ocr-box img#scanPreview{display:block;width:100%;max-width:100%;height:auto;max-height:420px;object-fit:contain;border-radius:9px;margin:10px 0;background:#080d1b}
+.ocr-box pre{overflow-x:auto;overflow-wrap:anywhere;word-break:break-word;max-width:100%}
