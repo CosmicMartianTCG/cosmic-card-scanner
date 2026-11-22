@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#080d1b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Cosmic Scanner" />
+  <meta name="description" content="Free personal Pokémon card scanner with timestamped batches, current pricing and CSV export." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>Cosmic Card Scanner</title>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><img src="./icon-192.png" alt="Cosmic Martian CM logo"/><div><strong>COSMIC</strong><span>CARD SCANNER</span></div></div>
+      <div class="version">V2 · FREE</div>
+    </header>
+    <main>
+      <div class="intro"><div class="kicker">YOUR COLLECTION. YOUR DATA. · V2</div><h1>Scan. Price.<br><em>Collect.</em></h1><p>Pokémon cards · Free lookup · Private batch log</p></div>
+      <section class="batch-overview panel">
+        <div class="batch-header"><div><label>ACTIVE BATCH</label><div class="batch-line"><h2 id="batchId">—</h2><button class="icon-btn" id="copyBatch" aria-label="Copy batch number" title="Copy batch number">⧉</button></div><div class="subtle" id="batchStarted">—</div></div><button id="newBatch" class="btn secondary small">+ New batch</button></div>
+        <div class="stats"><div><span id="batchCount">0</span><small>CARDS</small></div><div><span id="batchTotal">$0.00</span><small>BATCH VALUE</small></div><div><span id="overallCount">0</span><small>ALL SCANS</small></div></div>
+      </section>
+      <nav class="tabs" aria-label="Sections"><button class="tab active" data-view="scan">SCANNER</button><button class="tab" data-view="history">BATCH HISTORY</button><button class="tab" data-view="manage">DATA & EXPORT</button></nav>
+      <div id="lastScan" class="last-scan hidden" aria-live="polite"></div>
+      <section id="scanView" class="view active">
+        <div class="panel camera-panel">
+          <div class="eyebrow"><span class="pulse"></span> CAMERA SCANNER <span id="cameraState" class="right subtle">Not started</span></div>
+          <div class="camera-stage" id="cameraStage"><video id="camera" autoplay muted playsinline webkit-playsinline></video><div class="card-guide"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span></div><div class="camera-placeholder" id="placeholder"><div class="scanner-illustration">▣</div><h3>Ready to scan</h3><p>Start the camera and hold one card inside the frame.</p></div></div>
+          <div class="camera-actions"><button id="startCamera" class="btn secondary">Start camera</button><button id="scanNow" class="btn primary" disabled>◉ Scan card</button></div>
+          <div class="or"><span>OR USE YOUR CAMERA / A SAVED PHOTO</span></div>
+          <label class="btn upload" for="photoFile">📷 Take or select photo</label><input id="photoFile" type="file" accept="image/*" capture="environment" hidden />
+          <p class="fineprint">OCR runs on your device, not a paid AI API. First scan may take longer while its free language model loads.</p>
+        </div>
+        <section class="panel lookup-panel">
+          <div class="section-heading"><h3>Manual search / correct a scan</h3><span class="subtle">Pokémon (English)</span></div>
+          <div class="searchline"><input id="searchText" placeholder="Name or card number, e.g. Charizard 199/165" autocomplete="off" /><button id="searchBtn" class="btn primary small">Search</button></div>
+          <div id="scanStatus" class="status" role="status">Ready for your first card. Every scan gets a timestamp and batch ID.</div>
+          <div id="ocrTextBox" class="ocr-box hidden"><div class="eyebrow">TEXT DETECTED <button id="toggleOCR" class="text-btn">Hide</button></div><pre id="ocrText"></pre></div>
+          <div id="results" class="results"></div>
+          <div id="candidate" class="candidate hidden"></div>
+        </section>
+      </section>
+      <section id="historyView" class="view">
+        <div class="panel"><div class="section-heading"><h3>Scan history</h3><button id="exportBatch" class="btn secondary small">Export active batch CSV</button></div><p class="fineprint">Your scans retain their original local date, time, batch number, and price snapshot.</p><div id="historyList"></div></div>
+      </section>
+      <section id="manageView" class="view">
+        <div class="panel"><h3>Your data stays on this device</h3><p>Download a backup occasionally. Safari data can be removed by clearing website data or switching phones.</p><div class="manage-actions"><button id="exportAll" class="btn primary">Export all CSV</button><button id="backup" class="btn secondary">Download JSON backup</button><label for="restoreFile" class="btn secondary">Restore JSON backup</label><input type="file" accept="application/json,.json" id="restoreFile" hidden /></div><p class="fineprint">CSV can be opened in Excel. JSON restores your full card and batch history. Backup files contain card details but not card photos.</p></div>
+        <div class="panel"><h3>About pricing</h3><p>Pokémon card data and available USD market prices come from the free TCGdex API, using its TCGplayer price fields. Prices are estimates, may be outdated or missing, and may be matched to the wrong printing. Confirm variant and card condition before selling.</p><p class="fineprint">Dragon Ball identification and pricing are planned for a later version. We will not show invented prices.</p><p class="fineprint">No login, paid subscription, or server-side database. V2 keeps your V1 scans on this same website address. Requires internet for catalog searches, price lookups, and initial OCR download.</p></div>
+      </section>
+    </main>
+    <footer><img src="./icon-192.png" alt=""/> COSMIC MARTIAN · BUILT FOR THE HOBBY</footer>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" defer></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>
