@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='2.6';
+const VERSION='2.7';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -200,5 +200,12 @@ $('backup').addEventListener('click',()=>download(new Blob([JSON.stringify(data,
 $('restoreFile').addEventListener('change',e=>{const f=e.target.files?.[0];e.target.value='';if(f)restore(f);});
 $('toggleOCR').addEventListener('click',()=>{$('ocrTextBox').classList.add('hidden');});
 window.addEventListener('pagehide',stopCamera);
-ensureBatch();render();if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+ensureBatch();render();
+// Temporarily disable the offline service worker while we stabilize iPhone updates.
+// This changes no localStorage records or saved batches.
+if('serviceWorker' in navigator){
+ navigator.serviceWorker.getRegistrations().then(regs=>Promise.all(regs.filter(r=>r.scope.startsWith(location.origin+location.pathname.replace(/[^/]*$/,''))).map(r=>r.unregister()))).catch(()=>{});
+}
+if('caches' in window){caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('cosmic-card-scanner-')).map(k=>caches.delete(k)))).catch(()=>{});}
+
 })();
