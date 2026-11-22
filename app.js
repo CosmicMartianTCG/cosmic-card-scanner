@@ -2,7 +2,7 @@
 (()=>{'use strict';
 const API='https://api.tcgdex.net/v2/en/cards';
 const STORE='cosmic-card-scanner-v1'; // Keep V1 key so upgrades retain saved batches.
-const VERSION='3.0';
+const VERSION='3.1';
 const $=id=>document.getElementById(id);
 const safe=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(v):'No USD price';
@@ -112,8 +112,149 @@ async function loadVerifiedCard(id){
   status('Artwork confirmation recorded. Choose the foil printing and condition; price is an estimate.','ok');
  }catch(e){status('Card or price retrieval failed: '+e.message,'error');}
 }
-async function startCamera(){if(stream){stopCamera();return;}if(!navigator.mediaDevices?.getUserMedia){status('This browser cannot start live camera. Use Take or select photo below. A secure HTTPS site is needed.','error');return;}try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1920}}});$('camera').srcObject=stream;await $('camera').play();$('cameraStage').classList.add('live');$('scanNow').disabled=false;$('startCamera').textContent='Stop camera';$('cameraState').textContent='Live';status('Align one card and tap Scan card.');}catch(e){status('Camera permission failed. Use Take or select photo below, or allow camera access in Safari settings.','error');}}
-function stopCamera(){for(const track of stream?.getTracks()||[])track.stop();stream=null;$('camera').srcObject=null;$('cameraStage').classList.remove('live');$('scanNow').disabled=true;$('startCamera').textContent='Start camera';$('cameraState').textContent='Not started';}
+
+// V3.1 live border detection: OpenCV detects rectangles, not Pokémon identities.
+// Heavy image processing is throttled; no scans are automatically recorded.
+let cvReady=false,cvLoading=null,trackTimer=null,trackBusy=false,lastQuad=null,stableFrames=0;
+function trackerLabel(message){const el=$('trackerState');if(el)el.textContent=message;}
+function loadCV(){
+ if(cvLoading)return cvLoading;
+ cvLoading=new Promise((resolve,reject)=>{
+  const finish=()=>{if(window.cv&&typeof cv.Mat==='function'){cvReady=true;resolve(window.cv);}else reject(Error('OpenCV unavailable'));};
+  if(window.cv&&typeof cv.Mat==='function'){finish();return;}
+  const tag=document.createElement('script');
+  tag.src='https://docs.opencv.org/4.x/opencv.js';tag.async=true;
+  tag.onerror=()=>reject(Error('Unable to load free OpenCV detector'));
+  tag.onload=()=>{
+   if(window.cv&&typeof cv.Mat==='function'){finish();return;}
+   if(window.cv&&typeof cv.then==='function'){window.cv.then(x=>{window.cv=x;finish();}).catch(reject);return;}
+   if(window.cv)window.cv.onRuntimeInitialized=finish;
+   else reject(Error('OpenCV did not initialize'));
+  };
+  document.head.appendChild(tag);
+ }).catch(error=>{cvLoading=null;cvReady=false;trackerLabel('Detector unavailable · manual frame works');throw error;});
+ return cvLoading;
+}
+function overlayDimensions(){
+ const el=$('detectionOverlay');const stage=$('cameraStage');
+ if(!el||!stage)return null;
+ const rect=stage.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+ const sw=Math.max(1,Math.round(rect.width*dpr)),sh=Math.max(1,Math.round(rect.height*dpr));
+ if(el.width!==sw||el.height!==sh){el.width=sw;el.height=sh;}
+ return {canvas:el,context:el.getContext('2d'),rect,dpr};
+}
+function displayPoint(p,w,h,rect){
+ const scale=Math.max(rect.width/w,rect.height/h);
+ return {x:(p.x*scale-(w*scale-rect.width)/2),y:(p.y*scale-(h*scale-rect.height)/2)};
+}
+function orderCorners(pts){
+ const sum=p=>p.x+p.y,diff=p=>p.y-p.x;
+ const tl=pts.reduce((a,b)=>sum(a)<sum(b)?a:b),br=pts.reduce((a,b)=>sum(a)>sum(b)?a:b);
+ const tr=pts.reduce((a,b)=>diff(a)<diff(b)?a:b),bl=pts.reduce((a,b)=>diff(a)>diff(b)?a:b);
+ const unique=new Set([tl,tr,br,bl]);return unique.size===4?[tl,tr,br,bl]:null;
+}
+function edgeLength(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function drawTrackedBorder(){
+ const o=overlayDimensions();if(!o)return;
+ const {context:ctx,canvas,rect,dpr}=o;
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ if(!lastQuad||!stream)return;
+ const vid=$('camera');
+ const pts=lastQuad.map(p=>displayPoint(p,vid.videoWidth,vid.videoHeight,rect));
+ ctx.save();ctx.scale(dpr,dpr);ctx.strokeStyle='#dafa35';ctx.shadowColor='#caff2d';ctx.shadowBlur=12;
+ ctx.lineWidth=3;ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.stroke();
+ ctx.shadowBlur=0;ctx.fillStyle='#dafa35';pts.forEach(p=>ctx.fillRect(p.x-4,p.y-4,8,8));ctx.restore();
+}
+function detectCardQuad(){
+ const vid=$('camera');if(!cvReady||!vid.videoWidth||!vid.videoHeight)return null;
+ const cv=window.cv,scale=Math.min(1,430/Math.max(vid.videoWidth,vid.videoHeight));
+ const w=Math.max(2,Math.round(vid.videoWidth*scale)),h=Math.max(2,Math.round(vid.videoHeight*scale));
+ const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+ canvas.getContext('2d',{willReadFrequently:true}).drawImage(vid,0,0,w,h);
+ let src=null,gray=null,blur=null,edges=null,contours=null,hierarchy=null,kernel=null;
+ try{
+  src=cv.imread(canvas);gray=new cv.Mat();blur=new cv.Mat();edges=new cv.Mat();
+  contours=new cv.MatVector();hierarchy=new cv.Mat();kernel=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(3,3));
+  cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
+  cv.Canny(blur,edges,45,135);cv.morphologyEx(edges,edges,cv.MORPH_CLOSE,kernel);
+  cv.findContours(edges,contours,hierarchy,cv.RETR_LIST,cv.CHAIN_APPROX_SIMPLE);
+  let best=null,bestScore=0;
+  for(let i=0;i<Math.min(contours.size(),160);i++){
+   const contour=contours.get(i);let approx=null;
+   try{
+    const perimeter=cv.arcLength(contour,true),area=cv.contourArea(contour);
+    if(area<w*h*.075||area>w*h*.90||perimeter<110)continue;
+    approx=new cv.Mat();cv.approxPolyDP(contour,approx,.025*perimeter,true);
+    if(approx.rows!==4||!cv.isContourConvex(approx))continue;
+    const data=approx.data32S,pts=[];
+    for(let j=0;j<4;j++)pts.push({x:data[j*2],y:data[j*2+1]});
+    const ordered=orderCorners(pts);if(!ordered)continue;
+    const width=(edgeLength(ordered[0],ordered[1])+edgeLength(ordered[3],ordered[2]))/2;
+    const height=(edgeLength(ordered[0],ordered[3])+edgeLength(ordered[1],ordered[2]))/2;
+    const ratio=Math.min(width,height)/Math.max(width,height);
+    if(ratio<.56||ratio>.82)continue;
+    // The card should be portrait, and largely visible on camera.
+    if(height<width*.95)continue;
+    const cx=pts.reduce((n,p)=>n+p.x,0)/4,cy=pts.reduce((n,p)=>n+p.y,0)/4;
+    const centrality=1-Math.min(1,Math.hypot(cx-w/2,cy-h/2)/Math.hypot(w/2,h/2));
+    const score=area/(w*h)*.8+centrality*.16+(1-Math.abs(ratio-.716)/.3)*.04;
+    if(score>bestScore){bestScore=score;best=ordered.map(p=>({x:p.x/scale,y:p.y/scale}));}
+   }finally{approx?.delete();contour.delete();}
+  }
+  return best;
+ }finally{kernel?.delete();hierarchy?.delete();contours?.delete();edges?.delete();blur?.delete();gray?.delete();src?.delete();}
+}
+function trackCard(){
+ if(!stream||!cvReady||trackBusy||ocrBusy||document.hidden)return;
+ trackBusy=true;
+ try{
+  const found=detectCardQuad();
+  if(found){
+   if(lastQuad){
+    const shift=found.reduce((v,p,i)=>v+edgeLength(p,lastQuad[i]),0)/4;
+    stableFrames=shift<Math.max(55,$('camera').videoWidth*.045)?Math.min(stableFrames+1,12):1;
+   }else stableFrames=1;
+   lastQuad=found;
+   trackerLabel(stableFrames>=2?'Card detected · border locked':'Card detected · stabilizing');
+  }else{lastQuad=null;stableFrames=0;trackerLabel('Looking for card edges…');}
+  drawTrackedBorder();
+ }catch(error){lastQuad=null;stableFrames=0;trackerLabel('Detector error · manual scan available');}
+ finally{trackBusy=false;}
+}
+function startTracking(){
+ stopTracking();
+ trackerLabel('Loading free card-edge detector…');
+ loadCV().then(()=>{
+  if(!stream)return;
+  trackerLabel('Looking for card edges…');
+  trackCard();trackTimer=setInterval(trackCard,650);
+ }).catch(()=>{});
+}
+function stopTracking(){
+ if(trackTimer){clearInterval(trackTimer);trackTimer=null;}
+ lastQuad=null;stableFrames=0;
+ const o=overlayDimensions();if(o)o.context.clearRect(0,0,o.canvas.width,o.canvas.height);
+}
+function perspectiveFrame(){
+ if(!cvReady||!lastQuad||stableFrames<2)return null;
+ const cv=window.cv,video=$('camera'),w=video.videoWidth,h=video.videoHeight;
+ let src=null,dst=null,matrix=null,from=null,to=null;
+ try{
+  const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+  canvas.getContext('2d').drawImage(video,0,0,w,h);
+  src=cv.imread(canvas);dst=new cv.Mat();
+  const pts=lastQuad,width=720,height=1008;
+  from=cv.matFromArray(4,1,cv.CV_32FC2,pts.flatMap(p=>[p.x,p.y]));
+  to=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,width-1,0,width-1,height-1,0,height-1]);
+  matrix=cv.getPerspectiveTransform(from,to);
+  cv.warpPerspective(src,dst,matrix,new cv.Size(width,height),cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar());
+  const result=document.createElement('canvas');cv.imshow(result,dst);
+  return result.toDataURL('image/jpeg',.92);
+ }finally{to?.delete();from?.delete();matrix?.delete();dst?.delete();src?.delete();}
+}
+
+async function startCamera(){if(stream){stopCamera();return;}if(!navigator.mediaDevices?.getUserMedia){status('This browser cannot start live camera. Use Take or select photo below. A secure HTTPS site is needed.','error');return;}try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1920}}});$('camera').srcObject=stream;await $('camera').play();$('cameraStage').classList.add('live');$('scanNow').disabled=false;$('startCamera').textContent='Stop camera';$('cameraState').textContent='Live';status('Hold one card in view. The green border will follow detected edges.');startTracking();}catch(e){status('Camera permission failed. Use Take or select photo below, or allow camera access in Safari settings.','error');}}
+function stopCamera(){stopTracking();for(const track of stream?.getTracks()||[])track.stop();stream=null;$('camera').srcObject=null;$('cameraStage').classList.remove('live');$('scanNow').disabled=true;$('startCamera').textContent='Start camera';$('cameraState').textContent='Not started';}
 function liveFrame(){const video=$('camera');const w=video.videoWidth,h=video.videoHeight;if(!w||!h)throw new Error('Camera is not ready');
 // The preview uses object-fit:cover. Map the visible green guide to original camera pixels.
 const stage=$('cameraStage').getBoundingClientRect(),guide=document.querySelector('.card-guide').getBoundingClientRect();
@@ -309,7 +450,7 @@ $('newBatch').addEventListener('click',()=>{if(!confirm('Start a new numbered ba
 $('copyBatch').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(data.activeBatchId||'');status('Batch number copied.','ok');}catch{status('Batch number: '+data.activeBatchId);}});
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
 $('startCamera').addEventListener('click',startCamera);
-$('scanNow').addEventListener('click',async()=>{if(!stream||ocrBusy)return;try{await performOCR(liveFrame(),'live camera');}catch(e){status('Could not capture image: '+e.message,'error');}});
+$('scanNow').addEventListener('click',async()=>{if(!stream||ocrBusy)return;try{await performOCR(perspectiveFrame()||liveFrame(),'live camera');}catch(e){status('Could not capture image: '+e.message,'error');}});
 $('photoFile').addEventListener('change',async e=>{const f=e.target.files?.[0];e.target.value='';if(!f||ocrBusy)return;try{const img=await imageFromFile(f);await performOCR(img,'photo');}catch(err){status('Photo could not be processed: '+err.message,'error');}});
 $('searchBtn').addEventListener('click',()=>searchCards($('searchText').value));$('searchText').addEventListener('keydown',e=>{if(e.key==='Enter')searchCards($('searchText').value);});
 $('results').addEventListener('click',e=>{const btn=e.target.closest('button[data-card]');if(btn)chooseCard(btn.dataset.card);});
